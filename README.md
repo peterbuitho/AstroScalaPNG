@@ -6,12 +6,10 @@ the corner ("Andromeda Galaxy (M 31)" with NGC/IC ids, type and coordinates
 underneath, looked up from SIMBAD). Comes as a command-line tool and a small
 desktop app, both on the JVM, for Windows, macOS and Linux.
 
-AstroScalaPNG is a **Scala 3 / JVM port of [xisf2png](https://github.com/peterbuitho/xisf2png)**
-by peterbuitho — a Rust CLI + egui desktop app. The conversion pipeline (XISF
-reader, FITS reader, stretch, resize, stamp, SIMBAD lookup, batch runner) and
-the command-line interface are faithful ports; see
-[What changed in the port](#what-changed-in-the-port) for the deliberate
-differences.
+AstroScalaPNG is a **Scala 3 / JVM CLI and desktop app** on top of
+[`astropng-core`](https://github.com/peterbuitho/astropng-core) — see
+[Architecture](#architecture) — a shared conversion pipeline also used by
+this program's Rust/Go/Zig ports.
 
 Each image's full data range is linearly scaled to 0–255 (a plain min/max
 stretch — no STF/MTF astronomical stretch). Only the first image in a file is
@@ -21,17 +19,34 @@ converted. Mono and RGB images are supported.
 
 | Module | What it is                                                                     |
 | ------ | ------------------------------------------------------------------------------ |
-| `core` | The library: XISF/FITS readers, pixel stretch, resize + stamp, WCS, catalogues, SIMBAD lookup, batch runner. Mirrors the Rust `src/lib.rs` surface. |
-| `cli`  | `astroscalapng` — the command-line tool. Mirrors the Rust `src/main.rs`.        |
-| `gui`  | `astroscalapng-gui` — a JavaFX desktop app with the same capabilities as the Rust egui app (new UI, not a 1:1 clone). |
+| `core` | `Native` — Foreign Function & Memory (Panama) bindings into `astropng-core`, and `Batch`, the thin public API (`Options`/`Progress`/`Summary`/`run`) the CLI and GUI call. |
+| `cli`  | `astroscalapng` — the command-line tool.        |
+| `gui`  | `astroscalapng-gui` — a JavaFX desktop app. |
+
+## Architecture
+
+The conversion pipeline (XISF/FITS parsing, stretch, resize/stamp, WCS,
+SIMBAD lookup, batch orchestration) lives in
+[`astropng-core`](https://github.com/peterbuitho/astropng-core), a Rust
+library shared with this program's Rust/Go/Zig ports. `core`'s `Native.scala`
+binds to its C ABI directly via `java.lang.foreign` (stable since JDK 22 — no
+JNI glue code, no header parser needed; the C struct layouts are hand-declared
+`MemoryLayout`s, checked against the real library at build time). `cli.Main`
+and `gui.GuiApp` are unaware of this; they only ever called `Batch`'s public
+API. See `third_party/astropng-core/VERSION` for the pinned version and
+`scripts/build-core.sh` for how the shared library is built.
 
 ## Build and run
 
-Requires a JDK 21+ (Temurin recommended) and [sbt](https://www.scala-sbt.org/).
+Requires a JDK **25** (Temurin recommended; any 22+ JDK works, since that's
+when the Foreign Function & Memory API stabilized) and a
+[Rust toolchain](https://rustup.rs) (to build `astropng-core`), plus
+[sbt](https://www.scala-sbt.org/).
 
 ```
+bash scripts/build-core.sh   # builds third_party/astropng-core/lib/<libname>
 sbt compile          # all three modules
-sbt test             # unit tests (ported from the Rust #[cfg(test)] modules)
+sbt test             # unit tests
 sbt "cli/run --help" # run the CLI from sbt
 sbt gui/run          # run the GUI from sbt
 ```
@@ -57,8 +72,10 @@ cli\target\universal\stage\bin\astroscalapng.bat --help      # Windows
 
 The GUI is packaged with `JavaAppPackaging` only (JavaFX's native libraries do
 not combine cleanly with a jlink image built from a plain classpath), so it
-needs a Java 21+ runtime on the machine. The JavaFX jars are selected for the
-platform that runs the build, so each OS's archive is built on its own runner.
+needs a Java 22+ runtime on the machine. The JavaFX jars are selected for the
+platform that runs the build, so each OS's archive is built on its own
+runner, which also builds and bundles that platform's `astropng-core` shared
+library into the staged app's `lib/` folder.
 
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) compiles and tests on
 Linux, Windows and macOS for every push and pull request.
@@ -221,38 +238,14 @@ Your names override everything else.
 - Not supported: images stored in extensions, tile-compressed `.fz` files, and
   `.fits.gz`.
 
-## What changed in the port
-
-| Area | Rust original (xisf2png) | This port |
-| ---- | ------------------------ | --------- |
-| Desktop app | `eframe`/`egui` (OpenGL), `rfd` file dialogs | **JavaFX** — a new UI with equivalent capability, not a pixel-for-pixel clone. The Windows Explorer context-menu integration and the single-window/IPC handoff of the Rust GUI are **not** ported. |
-| Distribution | Native binaries per target (musl static CLI, macOS universal `.app`) | **JVM** — sbt-native-packager: a `jlink` custom runtime image for the CLI (self-contained, no JDK needed) and a `JavaAppPackaging` launcher for the GUI (needs Java 21+). No GraalVM native-image. |
-| XML | `roxmltree` | JDK `javax.xml.parsers.DocumentBuilder` (DTDs and external entities disabled), traversed with the same element/attribute access pattern. |
-| Image resize | `image` crate, **Lanczos3** | **Java2D bicubic** with progressive halving on large downscales. The JVM has no built-in Lanczos3; this is a close behavioural equivalent, not a bit-identical one. |
-| Text stamping | `ab_glyph` glyph rasteriser | `java.awt.Font` + `Graphics2D` with antialiasing and kerning. Same geometry (48 px title, 30 px subtitle, 14 px gap, 60/120 px margins, shrink-to-fit, 2 px black shadow at 0.7 alpha), but the glyph rasteriser and the alpha blend differ slightly at the pixel level. |
-| PNG / image I/O | `image` crate | JDK `javax.imageio.ImageIO`. Mono stays 8-bit greyscale, RGB stays 8-bit RGB, as in the original. |
-| zlib | `flate2` | JDK `java.util.zip.Inflater`. |
-| lz4 | `lz4_flex` | `org.lz4:lz4-java` (block decompressor). |
-| zstd | `ruzstd` (pure Rust) | **`com.github.luben:zstd-jni`** — it bundles the native library for Linux, macOS and Windows in the jar and is extracted at run time. It works inside a jlink image because it is an ordinary classpath jar; the jlink image only trims JDK *modules*, not the application classpath. |
-| HTTP | `ureq` (rustls) | JDK `java.net.http.HttpClient` (12 s connect and request timeout, same URLs, same parsing). |
-| Concurrency | `std::thread::scope` + `mpsc` + `Mutex<Resolver>` | `ExecutorService` with the same worker count rule (requested, else `min(availableProcessors, 8)`, clamped to `[1, jobCount]`), a `LinkedBlockingQueue` as the results channel and a lock around the resolver, so network lookups stay serialised while decode/stretch/resize/stamp/encode run in parallel. |
-| Config file | `XISF2PNG_NAMES`, `xisf2png-names.txt`, `<config>/xisf2png/names.txt` | `ASTROSCALAPNG_NAMES`, `astroscalapng-names.txt`, `<config>/astroscalapng/names.txt`. |
-| Errors | `Result<T, String>` | Exceptions (`XisfError` for per-file problems, `BatchError` for fatal setup problems) carrying the same message text, so the CLI output is unchanged. |
-
-Everything else — the CLI flags, defaults, file discovery, output paths, exit
-codes, `OK`/`SKIP`/`ERROR` lines, summary and warning text, the Caldwell and
-popular-name tables, the WCS maths, the FITS and XISF parsing rules, the
-min/max stretch and the whole `identify()` decision tree — is a direct port, and
-the Rust unit tests are ported with the same assertions and tolerances.
-
 ## Credits and licensing
 
 - Original project: **[xisf2png](https://github.com/peterbuitho/xisf2png)** by
   peterbuitho. The Rust repository carries no `LICENSE` file, so no license is
   asserted here either; if you plan to redistribute, ask the original author.
-- Stamp font: **DejaVu Sans Condensed Bold**, bundled in `core`'s resources;
-  its license is in [`assets/fonts/LICENSE-DejaVu.txt`](assets/fonts/LICENSE-DejaVu.txt)
-  (a copy also ships next to the font in the jar).
+- Stamp font: **DejaVu Sans Condensed Bold**, embedded in `astropng-core`; its
+  license is in
+  [`astropng-core/assets/fonts/LICENSE-DejaVu.txt`](https://github.com/peterbuitho/astropng-core/blob/main/assets/fonts/LICENSE-DejaVu.txt).
 - Object data comes from the [CDS Sesame](https://cds.unistra.fr/cgi-bin/Sesame)
   name resolver and [SIMBAD](https://simbad.cds.unistra.fr/); please cite them
   if you publish images produced with this tool.

@@ -38,11 +38,17 @@ lazy val core = (project in file("core"))
   .settings(
     name := "astroscalapng-core",
     libraryDependencies ++= Seq(
-      "org.lz4"          % "lz4-java" % "1.8.0",
-      "com.github.luben" % "zstd-jni" % "1.5.6-9",
-      "org.scalameta"   %% "munit"    % "1.0.3" % Test
+      "org.scalameta" %% "munit" % "1.0.3" % Test
     )
   )
+
+// JDK 24+ warns (and will eventually restrict) native access without an
+// explicit opt-in. A jar manifest attribute only auto-applies to `java -jar`
+// launches, but sbt-native-packager's generated scripts build a classpath
+// and invoke the main class directly, so the flag is added to the launcher
+// itself instead.
+lazy val enableNativeAccess =
+  bashScriptExtraDefines += """addJava "--enable-native-access=ALL-UNNAMED""""
 
 lazy val cli = (project in file("cli"))
   .dependsOn(core)
@@ -51,8 +57,7 @@ lazy val cli = (project in file("cli"))
     name             := "astroscalapng",
     Compile / mainClass := Some("astroscalapng.cli.Main"),
     executableScriptName := "astroscalapng",
-    // zstd-jni and lz4-java are plain classpath jars (automatic modules); the
-    // jlink image only needs the JDK modules they and we actually touch.
+    enableNativeAccess,
     jlinkIgnoreMissingDependency := JlinkIgnore.everything,
     jlinkModules ++= Seq(
       "java.base",
@@ -70,6 +75,7 @@ lazy val gui = (project in file("gui"))
     name                := "astroscalapng-gui",
     Compile / mainClass := Some("astroscalapng.gui.Launcher"),
     executableScriptName := "astroscalapng-gui",
+    enableNativeAccess,
     libraryDependencies ++= javafxModules.map(m =>
       "org.openjfx" % s"javafx-$m" % javafxVersion classifier javafxClassifier
     ),

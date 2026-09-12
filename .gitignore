@@ -22,3 +22,6 @@ Thumbs.db
 dist/
 *.zip
 *.tar.gz
+
+# astropng-core shared library, built by scripts/build-core.sh
+/third_party/astropng-core/lib/

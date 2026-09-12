@@ -35,10 +35,16 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "21"
+          java-version: "25"
           cache: sbt
 
       - uses: sbt/setup-sbt@v1
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build astropng-core
+        shell: bash
+        run: bash scripts/build-core.sh
 
       - name: Test
         run: sbt -batch test
@@ -46,9 +52,20 @@ jobs:
       # cli: JavaAppPackaging + JlinkPlugin, so the archive carries its own
       # stripped-down Java runtime (folder `jre`) and needs no JDK installed.
       # gui: JavaAppPackaging with the JavaFX jars for this platform; it runs
-      # on any installed Java 21+.
+      # on any installed Java 25+.
       - name: Build app images
         run: sbt -batch "cli/stage" "gui/stage"
+
+      # Both apps link astropng-core at runtime via java.lang.foreign; drop
+      # the shared library built above into each staged app's lib/ folder,
+      # next to the jars, where Native.scala's jar-relative lookup finds it.
+      - name: Bundle astropng-core into staged apps
+        shell: bash
+        run: |
+          set -euo pipefail
+          lib=$(ls third_party/astropng-core/lib/)
+          cp "third_party/astropng-core/lib/$lib" cli/target/universal/stage/lib/
+          cp "third_party/astropng-core/lib/$lib" gui/target/universal/stage/lib/
 
       - name: Assemble (Linux / macOS)
         if: runner.os != 'Windows'
@@ -61,7 +78,6 @@ jobs:
           cp -R cli/target/universal/stage dist/cli
           cp -R gui/target/universal/stage dist/gui
           cp README.md dist/
-          cp -R assets/fonts dist/fonts
           (cd dist && zip -q -r "../$asset" .)
           echo "ASSET=$asset" >> "$GITHUB_ENV"
 
@@ -76,7 +92,6 @@ jobs:
           Copy-Item -Recurse cli/target/universal/stage dist/cli
           Copy-Item -Recurse gui/target/universal/stage dist/gui
           Copy-Item README.md dist/
-          Copy-Item -Recurse assets/fonts dist/fonts
           Compress-Archive -Path dist/* -DestinationPath $asset
           "ASSET=$asset" | Out-File -FilePath $env:GITHUB_ENV -Append
 

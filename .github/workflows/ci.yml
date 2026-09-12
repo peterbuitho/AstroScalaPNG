@@ -21,10 +21,16 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "21"
+          java-version: "25"
           cache: sbt
 
       - uses: sbt/setup-sbt@v1
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build astropng-core
+        shell: bash
+        run: bash scripts/build-core.sh
 
       - name: Compile
         run: sbt -batch compile
