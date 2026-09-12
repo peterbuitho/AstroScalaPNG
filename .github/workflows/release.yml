@@ -1,0 +1,114 @@
+# Builds AstroScalaPNG for Windows, macOS and Linux and attaches the archives
+# to a GitHub Release.
+#
+# Triggered by pushing a tag like `v0.5.0`. Can also be run manually from the
+# Actions tab ("Run workflow") to check that all targets still build; in that
+# case the archives are available as workflow artifacts but no release is made.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: linux
+          - os: windows-latest
+            name: windows
+          - os: macos-latest
+            name: macos
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: sbt
+
+      - uses: sbt/setup-sbt@v1
+
+      - name: Test
+        run: sbt -batch test
+
+      # cli: JavaAppPackaging + JlinkPlugin, so the archive carries its own
+      # stripped-down Java runtime (folder `jre`) and needs no JDK installed.
+      # gui: JavaAppPackaging with the JavaFX jars for this platform; it runs
+      # on any installed Java 21+.
+      - name: Build app images
+        run: sbt -batch "cli/stage" "gui/stage"
+
+      - name: Assemble (Linux / macOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          arch=$(echo "${{ runner.arch }}" | tr '[:upper:]' '[:lower:]')
+          asset="astroscalapng-${{ matrix.name }}-${arch}.zip"
+          rm -rf dist && mkdir -p dist
+          cp -R cli/target/universal/stage dist/cli
+          cp -R gui/target/universal/stage dist/gui
+          cp README.md dist/
+          cp -R assets/fonts dist/fonts
+          (cd dist && zip -q -r "../$asset" .)
+          echo "ASSET=$asset" >> "$GITHUB_ENV"
+
+      - name: Assemble (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $arch = "${{ runner.arch }}".ToLower()
+          $asset = "astroscalapng-${{ matrix.name }}-$arch.zip"
+          if (Test-Path dist) { Remove-Item -Recurse -Force dist }
+          New-Item -ItemType Directory dist | Out-Null
+          Copy-Item -Recurse cli/target/universal/stage dist/cli
+          Copy-Item -Recurse gui/target/universal/stage dist/gui
+          Copy-Item README.md dist/
+          Copy-Item -Recurse assets/fonts dist/fonts
+          Compress-Archive -Path dist/* -DestinationPath $asset
+          "ASSET=$asset" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Smoke test (Linux / macOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: ./cli/target/universal/stage/bin/astroscalapng --version
+
+      - name: Smoke test (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: cli\target\universal\stage\bin\astroscalapng.bat --version
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ env.ASSET }}
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true

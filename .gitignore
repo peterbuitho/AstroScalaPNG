@@ -1,0 +1,24 @@
+# sbt / Scala
+target/
+project/target/
+project/project/
+project/build.properties.lock
+.bsp/
+.bloop/
+.metals/
+.scala-build/
+metals.sbt
+
+# IDEs
+.idea/
+*.iml
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build output
+dist/
+*.zip
+*.tar.gz
