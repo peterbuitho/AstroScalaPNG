@@ -4,4 +4,4 @@ package astroscalapng
   * `version` in build.sbt.
   */
 object Version:
-  val value: String = "0.6.1"
+  val value: String = "0.7.0"
