@@ -95,6 +95,47 @@ jobs:
           Compress-Archive -Path dist/* -DestinationPath $asset
           "ASSET=$asset" | Out-File -FilePath $env:GITHUB_ENV -Append
 
+      - name: Build AppImage
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/appimagetool "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
+          chmod +x /tmp/appimagetool
+
+          # Unlike the native GUIs (Go/Zig), there's no shared-library
+          # discovery to do here: JavaFX's natives are bundled inside its
+          # classpath jars already, and `java` itself only needs glibc. The
+          # AppImage instead bundles a full JDK (reusing the one
+          # actions/setup-java already installed) so it needs no system Java
+          # at all -- sidestepping the JDK-version requirement entirely.
+          appdir="$(mktemp -d)/AppDir"
+          mkdir -p "$appdir/usr/lib/app"
+          cp -R "$JAVA_HOME" "$appdir/usr/lib/jvm"
+          cp gui/target/universal/stage/lib/*.jar "$appdir/usr/lib/app/"
+          cp third_party/astropng-core/lib/* "$appdir/usr/lib/app/"
+          cp assets/icon-256.png "$appdir/astroscalapng.png"
+          cat > "$appdir/AppRun" <<'EOF'
+          #!/bin/sh
+          HERE="$(dirname "$(readlink -f "$0")")"
+          export ASTROPNG_CORE_LIB="$HERE/usr/lib/app/libastropng_core.so"
+          exec "$HERE/usr/lib/jvm/bin/java" --enable-native-access=ALL-UNNAMED \
+            -cp "$HERE/usr/lib/app/*" astroscalapng.gui.Launcher "$@"
+          EOF
+          chmod +x "$appdir/AppRun"
+          cat > "$appdir/astroscalapng-gui.desktop" <<EOF
+          [Desktop Entry]
+          Type=Application
+          Name=AstroScalaPNG
+          Exec=astroscalapng-gui
+          Icon=astroscalapng
+          Categories=Graphics;
+          EOF
+
+          # No FUSE on GitHub-hosted runners; appimagetool extracts and runs
+          # itself instead of mounting.
+          /tmp/appimagetool --appimage-extract-and-run "$appdir" dist/astroscalapng-gui-linux.AppImage
+
       - name: Smoke test (Linux / macOS)
         if: runner.os != 'Windows'
         shell: bash
