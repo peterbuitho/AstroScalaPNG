@@ -1,7 +1,7 @@
 import scala.sys.process.*
 
 ThisBuild / organization := "io.github.astroscalapng"
-ThisBuild / version      := "0.5.0"
+ThisBuild / version      := "0.6.0"
 ThisBuild / scalaVersion := "3.3.7"
 
 // This is an application, not a published library: no sources/javadoc
