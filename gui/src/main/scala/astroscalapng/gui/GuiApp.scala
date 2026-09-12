@@ -10,6 +10,8 @@ import javafx.geometry.{Insets, Pos}
 import javafx.scene.Scene
 import javafx.scene.control.*
 import javafx.scene.layout.{BorderPane, GridPane, HBox, Priority, VBox}
+import javafx.scene.paint.Color
+import javafx.scene.text.{Text, TextFlow}
 import javafx.stage.{DirectoryChooser, FileChooser, Stage}
 
 /** Plain entry point: launching a JavaFX `Application` subclass directly from an
@@ -37,7 +39,8 @@ class GuiApp extends Application:
   private val filenameBox  = new CheckBox("Stamp the plain file name (no online lookup)")
 
   private val concurrencySpinner = new Spinner[Integer](0, 64, 0)
-  private val log                = new TextArea()
+  private val log                = new TextFlow()
+  private val logScroll          = new ScrollPane(log)
   private val progressBar        = new ProgressBar(0.0)
   private val statusLabel        = new Label("Ready.")
   private val convertButton      = new Button("Convert")
@@ -53,9 +56,8 @@ class GuiApp extends Application:
 
     resizeBox.setSelected(true)
     concurrencySpinner.setEditable(true)
-    log.setEditable(false)
-    log.setWrapText(false)
-    log.setPrefRowCount(16)
+    logScroll.setFitToWidth(true)
+    logScroll.setPrefHeight(260)
     cancelButton.setDisable(true)
     fileList.setPrefHeight(90)
     fileList.setPlaceholder(new Label("No explicit files: the input folder is scanned."))
@@ -152,8 +154,8 @@ class GuiApp extends Application:
 
     val rootPane = new BorderPane()
     rootPane.setTop(top)
-    rootPane.setCenter(log)
-    BorderPane.setMargin(log, new Insets(0, 12, 12, 12))
+    rootPane.setCenter(logScroll)
+    BorderPane.setMargin(logScroll, new Insets(0, 12, 12, 12))
 
     stage.setScene(new Scene(rootPane, 900, 720))
     stage.show()
@@ -180,14 +182,32 @@ class GuiApp extends Application:
       concurrency = concurrencySpinner.getValue.intValue()
     )
 
-  private def append(line: String): Unit =
-    Platform.runLater(() => log.appendText(line + "\n"))
+  // Segment colors match the Rust GUI's log coloring exactly.
+  private val okColor    = Color.rgb(120, 200, 120)
+  private val errorColor = Color.rgb(230, 120, 120)
+  private val labelColor = Color.rgb(140, 190, 255)
+  private val noteColor  = Color.rgb(235, 180, 90)
+
+  /** Appends one or more colored runs, then a newline, to the log. `None`
+    * keeps the default (black) text color.
+    */
+  private def appendSegments(segments: (String, Option[Color])*): Unit =
+    Platform.runLater(() =>
+      for (text, colorOpt) <- segments do
+        val t = new Text(text)
+        colorOpt.foreach(t.setFill)
+        log.getChildren.add(t)
+      log.getChildren.add(new Text("\n"))
+      logScroll.setVvalue(1.0)
+    )
+
+  private def clearLog(): Unit = log.getChildren.clear()
 
   private def startRun(): Unit =
     if worker.exists(_.isAlive) then return
     val opts = currentOptions()
     cancelFlag.set(false)
-    log.clear()
+    clearLog()
     progressBar.setProgress(0.0)
     convertButton.setDisable(true)
     cancelButton.setDisable(false)
@@ -204,13 +224,15 @@ class GuiApp extends Application:
                 val rel = p.rel.toString
                 p.status match
                   case FileStatus.Ok =>
-                    append(p.label match
-                      case Some(label) => s"OK    $rel  ->  $label"
-                      case None        => s"OK    $rel"
-                    )
-                  case FileStatus.Skipped   => append(s"SKIP  $rel")
-                  case FileStatus.Failed(e) => append(s"ERROR $rel: $e")
-                p.note.foreach(note => append(s"      note: $note"))
+                    val tail: Seq[(String, Option[Color])] = p.label match
+                      case Some(label) => Seq(("  ->  ", None), (label, Some(labelColor)))
+                      case None        => Seq.empty
+                    appendSegments((("OK    ", Some(okColor)) +: (rel, None) +: tail)*)
+                  case FileStatus.Skipped =>
+                    appendSegments(("SKIP  ", Some(Color.GRAY)), (rel, None))
+                  case FileStatus.Failed(e) =>
+                    appendSegments(("ERROR ", Some(errorColor)), (rel, None), (": ", None), (e, Some(errorColor)))
+                p.note.foreach(note => appendSegments(("      note: ", None), (note, Some(noteColor))))
                 val done = p.index.toDouble / math.max(p.total, 1)
                 Platform.runLater(() => progressBar.setProgress(done))
             )
@@ -225,7 +247,7 @@ class GuiApp extends Application:
           result match
             case Left(err) =>
               statusLabel.setText("Failed.")
-              log.appendText(s"$err\n")
+              appendSegments((err, Some(errorColor)))
             case Right(summary) => finish(opts, summary)
         },
       "astroscalapng-batch"
@@ -239,11 +261,12 @@ class GuiApp extends Application:
     if summary.total == 0 then
       progressBar.setProgress(0.0)
       statusLabel.setText(s"No ${opts.inputKind} files found.")
-      log.appendText(s"No ${opts.inputKind} files found.\n")
+      appendSegments((s"No ${opts.inputKind} files found.", None))
     else
       progressBar.setProgress(1.0)
       val line =
         s"$verb: ${summary.converted}   Skipped: ${summary.skipped}   Failed: ${summary.failed}"
-      log.appendText(s"\n$line\n")
-      summary.warnings.foreach(w => log.appendText(s"WARNING: $w\n"))
+      val lineColor = if summary.failed > 0 then Some(errorColor) else None
+      appendSegments(("\n", None), (line, lineColor))
+      summary.warnings.foreach(w => appendSegments((s"WARNING: $w", Some(noteColor))))
       statusLabel.setText(if summary.cancelled then s"Cancelled. $line" else line)
