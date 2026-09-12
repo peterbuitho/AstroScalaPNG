@@ -21,6 +21,38 @@ import astroscalapng.Batch.{FileStatus, Options, Progress, Summary}
 private[astroscalapng] object Native:
   import MemoryLayout.PathElement.groupElement as elem
 
+  private val MinJavaFeature = 22
+
+  /** The Foreign Function & Memory API this code relies on (`Arena.allocateFrom`,
+    * etc.) only stabilized in JDK 22; running on an older JDK doesn't
+    * necessarily fail at class-load time, but throws a cryptic
+    * `NoSuchMethodError` the first time a since-renamed/added method is hit.
+    * Called from [[run]] itself (never from this object's own initializer —
+    * throwing there would be wrapped in an uncatchable
+    * `ExceptionInInitializerError` instead of surfacing as a plain
+    * [[BatchError]]) so it's the first thing checked, before any other
+    * `java.lang.foreign` use.
+    */
+  private def checkJavaVersion(): Unit =
+    val feature = Runtime.version().feature()
+    if feature < MinJavaFeature then
+      throw new BatchError(
+        s"This build needs Java $MinJavaFeature or newer, but is running on Java $feature.\n\n${javaUpgradeAdvice()}"
+      )
+
+  /** Platform-appropriate one-liner to install a current JDK, since the exact
+    * command (and package manager) differs by OS.
+    */
+  private def javaUpgradeAdvice(): String =
+    val os = System.getProperty("os.name", "").toLowerCase
+    val command =
+      if os.contains("win") then "winget install EclipseAdoptium.Temurin.25.JDK"
+      else if os.contains("mac") then "brew install --cask temurin@25"
+      else "curl -s \"https://get.sdkman.io\" | bash && sdk install java 25-tem"
+    s"""Install a newer JDK (Temurin 25 recommended) and try again:
+       |  $command
+       |Or download it manually from https://adoptium.net/temurin/releases/""".stripMargin
+
   private val linker = Linker.nativeLinker()
 
   private val lookup: SymbolLookup =
@@ -138,6 +170,7 @@ private[astroscalapng] object Native:
     * a small watcher thread, same effect as before.
     */
   def run(opts: Options, cancel: AtomicBoolean, report: Progress => Unit): Summary =
+    checkJavaVersion()
     Arena.ofConfined().nn { arena =>
       val cOpts = toCOptions(arena, opts)
 

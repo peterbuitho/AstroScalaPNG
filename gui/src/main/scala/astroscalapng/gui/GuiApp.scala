@@ -25,7 +25,8 @@ object Launcher:
   */
 class GuiApp extends Application:
 
-  private val inputField  = new TextField(System.getProperty("user.dir"))
+  private val inputField  = new TextField()
+  inputField.setPromptText("(current folder if left empty)")
   private val outputField = new TextField()
   private val fontField   = new TextField()
 
