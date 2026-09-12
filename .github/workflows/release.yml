@@ -133,8 +133,12 @@ jobs:
           EOF
 
           # No FUSE on GitHub-hosted runners; appimagetool extracts and runs
-          # itself instead of mounting.
-          /tmp/appimagetool --appimage-extract-and-run "$appdir" dist/astroscalapng-gui-linux.AppImage
+          # itself instead of mounting. Built at the repo root, not under
+          # dist/ -- the release job's download-artifact preserves each
+          # artifact's internal paths under its own "dist" target folder, so
+          # a file already named dist/... here would land at dist/dist/...
+          # and be silently missed by that job's non-recursive dist/* glob.
+          /tmp/appimagetool --appimage-extract-and-run "$appdir" astroscalapng-gui-linux.AppImage
 
       - name: Smoke test (Linux / macOS)
         if: runner.os != 'Windows'
@@ -151,7 +155,7 @@ jobs:
           name: ${{ matrix.name }}
           path: |
             ${{ env.ASSET }}
-            dist/*.AppImage
+            *.AppImage
           if-no-files-found: error
 
   release:
