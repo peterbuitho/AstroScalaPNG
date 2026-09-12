@@ -25,3 +25,6 @@ dist/
 
 # astropng-core shared library, built by scripts/build-core.sh
 /third_party/astropng-core/lib/
+
+# Claude Code session state (e.g. agent worktrees) -- never part of the repo
+/.claude/
